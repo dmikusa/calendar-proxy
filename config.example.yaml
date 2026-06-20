@@ -1,0 +1,37 @@
+# Calendar Proxy — Example Configuration
+#
+# Path configurable via CALENDAR_PROXY_CONFIG env var (default: config.yaml)
+
+# HTTP port to listen on
+port: 8080
+
+# Directory for the on-disk cache file (calendar.ics)
+cache_dir: "/tmp/calendar-proxy-cache"
+
+# How often to refresh source calendars (seconds)
+refresh_interval_secs: 300
+
+# Retry settings for fetching source calendars
+retry:
+  count: 3                # Max retries per calendar
+  backoff_secs: 5         # Initial backoff (doubles each attempt)
+
+# Authentication — configure exactly ONE mode or leave empty for no auth
+auth:
+  # Mode 1: Query parameter token (no token_header)
+  # token: "your-secret-token"
+
+  # Mode 2: Custom header token (requires both token and token_header)
+  # token: "your-secret-token"
+  # token_header: "X-Calendar-Token"
+
+  # Mode 3: Basic auth (requires both username and password)
+  # username: "your-username"
+  # password: "your-password"
+
+  # If all fields are empty, no auth is required
+
+# Source calendars to aggregate
+calendars:
+  # - url: "https://pXX-caldav.icloud.com/.../calendar.ics"
+  # - url: "https://calendar.google.com/calendar/ical/.../basic.ics"

@@ -22,8 +22,8 @@ async fn main() {
         )
         .init();
 
-    let config_path = std::env::var("CALENDAR_PROXY_CONFIG")
-        .unwrap_or_else(|_| "config.yaml".to_string());
+    let config_path =
+        std::env::var("CALENDAR_PROXY_CONFIG").unwrap_or_else(|_| "config.yaml".to_string());
 
     let cfg = config::Config::from_file(&config_path).unwrap_or_else(|e| {
         tracing::error!("Failed to load config: {e}");
@@ -91,14 +91,8 @@ async fn main() {
     });
 
     let app = axum::Router::new()
-        .route(
-            "/calendar.ics",
-            axum::routing::get(handler_calendar),
-        )
-        .route(
-            "/health",
-            axum::routing::get(handler_health),
-        )
+        .route("/calendar.ics", axum::routing::get(handler_calendar))
+        .route("/health", axum::routing::get(handler_health))
         .layer(axum::Extension(auth_mode))
         .layer(TraceLayer::new_for_http())
         .with_state(state);
@@ -106,10 +100,12 @@ async fn main() {
     let addr = format!("0.0.0.0:{}", cfg.port);
     tracing::info!("Starting server on {addr}");
 
-    let listener = tokio::net::TcpListener::bind(&addr).await.unwrap_or_else(|e| {
-        tracing::error!("Failed to bind {addr}: {e}");
-        std::process::exit(1);
-    });
+    let listener = tokio::net::TcpListener::bind(&addr)
+        .await
+        .unwrap_or_else(|e| {
+            tracing::error!("Failed to bind {addr}: {e}");
+            std::process::exit(1);
+        });
 
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())

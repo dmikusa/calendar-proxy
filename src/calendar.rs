@@ -22,13 +22,20 @@ pub struct SanitizedCalendar {
 
 impl SanitizedCalendar {
     pub fn new() -> Self {
-        Self { vtimezones: Vec::new(), events: Vec::new() }
+        Self {
+            vtimezones: Vec::new(),
+            events: Vec::new(),
+        }
     }
 
     pub fn merge(&mut self, other: SanitizedCalendar) {
         for tz in other.vtimezones {
             let tzid = extract_tzid(&tz);
-            if !self.vtimezones.iter().any(|existing| extract_tzid(existing) == tzid) {
+            if !self
+                .vtimezones
+                .iter()
+                .any(|existing| extract_tzid(existing) == tzid)
+            {
                 self.vtimezones.push(tz);
             }
         }
@@ -136,7 +143,11 @@ fn convert_property(prop: &ical::property::Property) -> IcalProperty {
         })
         .unwrap_or_default();
     let value = prop.value.clone().unwrap_or_default();
-    IcalProperty { name, params, value }
+    IcalProperty {
+        name,
+        params,
+        value,
+    }
 }
 
 /// Serialize an IcalProperty back to ICS property string.
@@ -165,48 +176,54 @@ fn properties_to_sanitized_event(props: &[IcalProperty]) -> Option<SanitizedEven
     let uid = props
         .iter()
         .find(|p| p.name == "UID")
-        .map(|p| property_to_string(p))?;
+        .map(property_to_string)?;
 
     let dtstart = props
         .iter()
         .find(|p| p.name == "DTSTART")
-        .map(|p| property_to_string(p))?;
+        .map(property_to_string)?;
 
     let dtend = props
         .iter()
         .find(|p| p.name == "DTEND")
-        .map(|p| property_to_string(p));
+        .map(property_to_string);
 
     let duration = props
         .iter()
         .find(|p| p.name == "DURATION")
-        .map(|p| property_to_string(p));
+        .map(property_to_string);
 
     let rrule = props
         .iter()
         .find(|p| p.name == "RRULE")
-        .map(|p| property_to_string(p));
+        .map(property_to_string);
 
-    let exdate: Vec<String> =
-        props.iter().filter(|p| p.name == "EXDATE").map(property_to_string).collect();
+    let exdate: Vec<String> = props
+        .iter()
+        .filter(|p| p.name == "EXDATE")
+        .map(property_to_string)
+        .collect();
 
-    let rdate: Vec<String> =
-        props.iter().filter(|p| p.name == "RDATE").map(property_to_string).collect();
+    let rdate: Vec<String> = props
+        .iter()
+        .filter(|p| p.name == "RDATE")
+        .map(property_to_string)
+        .collect();
 
     let recurrence_id = props
         .iter()
         .find(|p| p.name == "RECURRENCE-ID")
-        .map(|p| property_to_string(p));
+        .map(property_to_string);
 
     let transp = props
         .iter()
         .find(|p| p.name == "TRANSP")
-        .map(|p| property_to_string(p));
+        .map(property_to_string);
 
     let status = props
         .iter()
         .find(|p| p.name == "STATUS")
-        .map(|p| property_to_string(p));
+        .map(property_to_string);
 
     Some(SanitizedEvent {
         uid,
@@ -227,17 +244,15 @@ fn extract_vtimezones(content: &str) -> Vec<String> {
     let mut zones = Vec::new();
     let mut pos = 0;
     let upper = content.to_uppercase();
-    loop {
-        let begin = match upper[pos..].find("BEGIN:VTIMEZONE") {
-            Some(idx) => pos + idx,
-            None => break,
-        };
-        let end = match upper[begin..].find("END:VTIMEZONE") {
-            Some(idx) => begin + idx + "END:VTIMEZONE".len(),
-            None => break,
-        };
-        zones.push(content[begin..end].to_string());
-        pos = end;
+    while let Some(begin) = upper[pos..].find("BEGIN:VTIMEZONE") {
+        let begin = pos + begin;
+        if let Some(end) = upper[begin..].find("END:VTIMEZONE") {
+            let end = begin + end + "END:VTIMEZONE".len();
+            zones.push(content[begin..end].to_string());
+            pos = end;
+        } else {
+            break;
+        }
     }
     zones
 }
@@ -255,8 +270,7 @@ pub fn parse_ics(content: &str) -> Result<SanitizedCalendar, String> {
         let ical_cal = component_result.map_err(|e| format!("ICS parse error: {e}"))?;
 
         for event in &ical_cal.events {
-            let props: Vec<IcalProperty> =
-                event.properties.iter().map(convert_property).collect();
+            let props: Vec<IcalProperty> = event.properties.iter().map(convert_property).collect();
 
             if is_cancelled(&props) {
                 continue;
@@ -373,11 +387,19 @@ mod tests {
         let content = load_fixture("multiple_events");
         let cal = parse_ics(&content).unwrap();
         assert_eq!(cal.events.len(), 3);
-        let uids: Vec<&str> = cal.events.iter().map(|e| {
-            if e.uid.contains("multi-1") { "multi-1" }
-            else if e.uid.contains("multi-2") { "multi-2" }
-            else { "multi-3" }
-        }).collect();
+        let uids: Vec<&str> = cal
+            .events
+            .iter()
+            .map(|e| {
+                if e.uid.contains("multi-1") {
+                    "multi-1"
+                } else if e.uid.contains("multi-2") {
+                    "multi-2"
+                } else {
+                    "multi-3"
+                }
+            })
+            .collect();
         assert!(uids.contains(&"multi-1"));
         assert!(uids.contains(&"multi-2"));
         assert!(uids.contains(&"multi-3"));

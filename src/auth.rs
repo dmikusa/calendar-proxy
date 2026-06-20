@@ -26,9 +26,9 @@ impl AuthMode {
                 token: auth.token.clone(),
                 header_name: auth.token_header.clone(),
             },
-            (true, false, false, false) => {
-                Self::QueryToken { token: auth.token.clone() }
-            }
+            (true, false, false, false) => Self::QueryToken {
+                token: auth.token.clone(),
+            },
             (false, false, true, true) => Self::BasicAuth {
                 username: auth.username.clone(),
                 password: auth.password.clone(),
@@ -133,8 +133,7 @@ mod tests {
     #[test]
     fn test_parse_basic_auth_valid() {
         let mut headers = HeaderMap::new();
-        let encoded = base64::engine::general_purpose::STANDARD
-            .encode("alice:hunter2");
+        let encoded = base64::engine::general_purpose::STANDARD.encode("alice:hunter2");
         headers.insert("Authorization", format!("Basic {encoded}").parse().unwrap());
         let result = parse_basic_auth(&headers);
         assert_eq!(result, Some(("alice".into(), "hunter2".into())));
@@ -163,8 +162,7 @@ mod tests {
     #[test]
     fn test_parse_basic_auth_missing_colon() {
         let mut headers = HeaderMap::new();
-        let encoded = base64::engine::general_purpose::STANDARD
-            .encode("justausername");
+        let encoded = base64::engine::general_purpose::STANDARD.encode("justausername");
         headers.insert("Authorization", format!("Basic {encoded}").parse().unwrap());
         assert_eq!(parse_basic_auth(&headers), None);
     }

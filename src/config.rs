@@ -39,14 +39,25 @@ pub struct CalendarSource {
     pub url: String,
 }
 
-fn default_port() -> u16 { 8080 }
-fn default_refresh_interval() -> u64 { 300 }
-fn default_retry_count() -> u32 { 3 }
-fn default_retry_backoff() -> u64 { 5 }
+fn default_port() -> u16 {
+    8080
+}
+fn default_refresh_interval() -> u64 {
+    300
+}
+fn default_retry_count() -> u32 {
+    3
+}
+fn default_retry_backoff() -> u64 {
+    5
+}
 
 impl Default for RetryConfig {
     fn default() -> Self {
-        Self { count: default_retry_count(), backoff_secs: default_retry_backoff() }
+        Self {
+            count: default_retry_count(),
+            backoff_secs: default_retry_backoff(),
+        }
     }
 }
 
@@ -83,18 +94,14 @@ impl Config {
             (true, true, false, false) => 1,
             (false, false, true, true) => 1,
             _ => {
-                return Err(
-                    "Auth configuration is ambiguous. Use exactly one of: \
+                return Err("Auth configuration is ambiguous. Use exactly one of: \
                      (token), (token + token_header), (username + password), or none"
-                        .to_string(),
-                );
+                    .to_string());
             }
         };
 
         if modes > 1 {
-            return Err(
-                "Multiple auth modes configured. Use exactly one auth mode".to_string(),
-            );
+            return Err("Multiple auth modes configured. Use exactly one auth mode".to_string());
         }
 
         if has_basic_user && !has_basic_pass {

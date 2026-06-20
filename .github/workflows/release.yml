@@ -1,0 +1,114 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: release
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    permissions:
+      contents: read
+      packages: write
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Compute version
+        id: version
+        run: |
+          BASE_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*= *"//; s/".*//')
+          COMMIT=$(git rev-parse --short HEAD)
+          echo "base=${BASE_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "full=${BASE_VERSION}-${COMMIT}" >> "$GITHUB_OUTPUT"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build release binary
+        run: cargo build --release --locked
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: calendar-proxy-${{ steps.version.outputs.full }}
+          path: target/release/calendar-proxy
+
+      - name: Install pack CLI
+        uses: buildpacks/github-actions/setup-pack@v5
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and publish OCI image
+        run: |
+          pack build ghcr.io/${{ github.repository }}:${{ steps.version.outputs.full }} \
+            --buildpack paketo-community/rust \
+            --builder paketobuildpacks/ubuntu-noble-builder \
+            --run-image paketobuildpacks/ubuntu-noble-run-static \
+            --publish
+
+      - name: Tag image as latest
+        run: |
+          pack build ghcr.io/${{ github.repository }}:latest \
+            --buildpack paketo-community/rust \
+            --builder paketobuildpacks/ubuntu-noble-builder \
+            --run-image paketobuildpacks/ubuntu-noble-run-static \
+            --publish
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Compute version
+        id: version
+        run: |
+          BASE_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*= *"//; s/".*//')
+          echo "base=${BASE_VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Download binary artifact
+        uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+          pattern: calendar-proxy-*
+          merge-multiple: true
+
+      - name: Create or update draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="v${{ steps.version.outputs.base }}"
+          if gh release view "$TAG" --draft &>/dev/null; then
+            echo "Release $TAG exists, uploading assets"
+          else
+            echo "Creating draft release $TAG"
+            gh release create "$TAG" --draft --generate-notes \
+              --title "calendar-proxy v${{ steps.version.outputs.base }}" \
+              --notes "Release candidate for v${{ steps.version.outputs.base }}"
+          fi
+          gh release upload "$TAG" artifacts/* --clobber

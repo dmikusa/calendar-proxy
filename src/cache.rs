@@ -100,10 +100,8 @@ async fn fetch_all_calendars(
         .map(|cal| {
             let client = client.clone();
             let url = cal.url.clone();
-            let retry_count = retry_count;
-            let backoff = retry_backoff_secs;
             tokio::spawn(async move {
-                fetch_with_retry(&client, &url, retry_count, backoff).await
+                fetch_with_retry(&client, &url, retry_count, retry_backoff_secs).await
             })
         })
         .collect();
