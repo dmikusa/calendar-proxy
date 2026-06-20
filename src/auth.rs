@@ -124,3 +124,107 @@ fn parse_basic_auth(headers: &HeaderMap) -> Option<(String, String)> {
     let (user, pass) = decoded.split_once(':')?;
     Some((user.to_string(), pass.to_string()))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::HeaderMap;
+
+    #[test]
+    fn test_parse_basic_auth_valid() {
+        let mut headers = HeaderMap::new();
+        let encoded = base64::engine::general_purpose::STANDARD
+            .encode("alice:hunter2");
+        headers.insert("Authorization", format!("Basic {encoded}").parse().unwrap());
+        let result = parse_basic_auth(&headers);
+        assert_eq!(result, Some(("alice".into(), "hunter2".into())));
+    }
+
+    #[test]
+    fn test_parse_basic_auth_missing_header() {
+        let headers = HeaderMap::new();
+        assert_eq!(parse_basic_auth(&headers), None);
+    }
+
+    #[test]
+    fn test_parse_basic_auth_wrong_scheme() {
+        let mut headers = HeaderMap::new();
+        headers.insert("Authorization", "Bearer token123".parse().unwrap());
+        assert_eq!(parse_basic_auth(&headers), None);
+    }
+
+    #[test]
+    fn test_parse_basic_auth_invalid_base64() {
+        let mut headers = HeaderMap::new();
+        headers.insert("Authorization", "Basic !!!invalid!!!".parse().unwrap());
+        assert_eq!(parse_basic_auth(&headers), None);
+    }
+
+    #[test]
+    fn test_parse_basic_auth_missing_colon() {
+        let mut headers = HeaderMap::new();
+        let encoded = base64::engine::general_purpose::STANDARD
+            .encode("justausername");
+        headers.insert("Authorization", format!("Basic {encoded}").parse().unwrap());
+        assert_eq!(parse_basic_auth(&headers), None);
+    }
+
+    #[test]
+    fn test_auth_mode_none() {
+        let mut auth = crate::config::AuthConfig::default();
+        let mode = AuthMode::from_config(&auth);
+        assert!(matches!(mode, AuthMode::None));
+        auth.token = "".into();
+        assert!(matches!(mode, AuthMode::None));
+    }
+
+    #[test]
+    fn test_auth_mode_query_token() {
+        let mut auth = crate::config::AuthConfig::default();
+        auth.token = "secret".into();
+        let mode = AuthMode::from_config(&auth);
+        match mode {
+            AuthMode::QueryToken { token } => assert_eq!(token, "secret"),
+            _ => panic!("Expected QueryToken"),
+        }
+    }
+
+    #[test]
+    fn test_auth_mode_header_token() {
+        let mut auth = crate::config::AuthConfig::default();
+        auth.token = "secret".into();
+        auth.token_header = "X-Cal-Token".into();
+        let mode = AuthMode::from_config(&auth);
+        match mode {
+            AuthMode::HeaderToken { token, header_name } => {
+                assert_eq!(token, "secret");
+                assert_eq!(header_name, "X-Cal-Token");
+            }
+            _ => panic!("Expected HeaderToken"),
+        }
+    }
+
+    #[test]
+    fn test_auth_mode_basic() {
+        let mut auth = crate::config::AuthConfig::default();
+        auth.username = "alice".into();
+        auth.password = "hunter2".into();
+        let mode = AuthMode::from_config(&auth);
+        match mode {
+            AuthMode::BasicAuth { username, password } => {
+                assert_eq!(username, "alice");
+                assert_eq!(password, "hunter2");
+            }
+            _ => panic!("Expected BasicAuth"),
+        }
+    }
+
+    #[test]
+    fn test_auth_mode_token_with_all_defaults_is_none() {
+        let mut auth = crate::config::AuthConfig::default();
+        auth.token_header = "X-Cal-Token".into();
+        // token_header without token -> falls to None
+        let mode = AuthMode::from_config(&auth);
+        assert!(matches!(mode, AuthMode::None));
+    }
+}
