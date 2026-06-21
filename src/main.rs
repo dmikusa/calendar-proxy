@@ -48,6 +48,7 @@ async fn main() {
         &cfg.calendars,
         cfg.retry.count,
         cfg.retry.backoff_secs,
+        &cfg.passthrough,
         ready.clone(),
     )
     .await;
@@ -67,6 +68,7 @@ async fn main() {
         let interval = cfg.refresh_interval_secs;
         let ready = ready.clone();
 
+        let passthrough = cfg.passthrough.clone();
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
@@ -75,6 +77,7 @@ async fn main() {
                     &calendars,
                     retry_count,
                     retry_backoff,
+                    &passthrough,
                     ready.clone(),
                 )
                 .await;

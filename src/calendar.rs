@@ -12,6 +12,7 @@ pub struct SanitizedEvent {
     pub recurrence_id: Option<String>,
     pub transp: Option<String>,
     pub status: Option<String>,
+    pub valarms: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -98,6 +99,10 @@ impl SanitizedCalendar {
                 out.push_str("\r\n");
             }
             out.push_str("SUMMARY:Busy\r\n");
+            for alarm in &event.valarms {
+                out.push_str(alarm);
+                out.push_str("\r\n");
+            }
             out.push_str("END:VEVENT\r\n");
         }
 
@@ -236,6 +241,7 @@ fn properties_to_sanitized_event(props: &[IcalProperty]) -> Option<SanitizedEven
         recurrence_id,
         transp,
         status,
+        valarms: Vec::new(),
     })
 }
 
@@ -257,8 +263,46 @@ fn extract_vtimezones(content: &str) -> Vec<String> {
     zones
 }
 
+/// Serialize a parsed IcalAlarm into ICS text, applying the alarm property whitelist.
+/// DESCRIPTION is overridden to "Reminder", SUMMARY to "Calendar Alert".
+/// Returns None if no whitelisted properties remain.
+fn serialize_alarm(alarm: &ical::parser::ical::component::IcalAlarm) -> Option<String> {
+    let mut parts = Vec::new();
+    for prop in &alarm.properties {
+        let mut cp = convert_property(prop);
+        match cp.name.as_str() {
+            "DESCRIPTION" => {
+                cp.value = "Reminder".to_string();
+                parts.push(cp);
+            }
+            "SUMMARY" => {
+                cp.value = "Calendar Alert".to_string();
+                parts.push(cp);
+            }
+            "TRIGGER" | "ACTION" | "DURATION" | "REPEAT" => parts.push(cp),
+            _ => {}
+        }
+    }
+    if parts.is_empty() {
+        return None;
+    }
+    let mut out = String::from("BEGIN:VALARM\r\n");
+    for p in &parts {
+        out.push_str(&property_to_string(p));
+        out.push_str("\r\n");
+    }
+    out.push_str("END:VALARM");
+    Some(out)
+}
+
 /// Parse an ICS string into a SanitizedCalendar.
-pub fn parse_ics(content: &str) -> Result<SanitizedCalendar, String> {
+///
+/// When `passthrough.alarms` is true, alarm components are serialized
+/// and stored in each event's `valarms` field.
+pub fn parse_ics(
+    content: &str,
+    passthrough: &crate::config::PassthroughConfig,
+) -> Result<SanitizedCalendar, String> {
     let reader = BufReader::new(std::io::Cursor::new(content));
     let parser = ical::IcalParser::new(reader);
     let mut calendar = SanitizedCalendar::new();
@@ -276,7 +320,10 @@ pub fn parse_ics(content: &str) -> Result<SanitizedCalendar, String> {
                 continue;
             }
 
-            if let Some(sanitized) = properties_to_sanitized_event(&props) {
+            if let Some(mut sanitized) = properties_to_sanitized_event(&props) {
+                if passthrough.alarms {
+                    sanitized.valarms = event.alarms.iter().filter_map(serialize_alarm).collect();
+                }
                 calendar.events.push(sanitized);
             }
         }
@@ -289,6 +336,16 @@ pub fn parse_ics(content: &str) -> Result<SanitizedCalendar, String> {
 mod tests {
     use super::*;
 
+    use crate::config::PassthroughConfig;
+
+    fn default_passthrough() -> PassthroughConfig {
+        PassthroughConfig { alarms: false }
+    }
+
+    fn alarms_passthrough() -> PassthroughConfig {
+        PassthroughConfig { alarms: true }
+    }
+
     fn load_fixture(name: &str) -> String {
         let path = format!("tests/fixtures/{name}.ics");
         std::fs::read_to_string(&path).expect("fixture not found")
@@ -297,7 +354,7 @@ mod tests {
     #[test]
     fn test_simple_event_sanitization() {
         let content = load_fixture("simple");
-        let cal = parse_ics(&content).unwrap();
+        let cal = parse_ics(&content, &default_passthrough()).unwrap();
         assert_eq!(cal.events.len(), 1);
         let event = &cal.events[0];
         assert!(event.uid.contains("test-uid-1"));
@@ -309,14 +366,13 @@ mod tests {
         assert!(event.transp.as_ref().unwrap().contains("OPAQUE"));
         assert!(event.status.is_some());
         assert!(event.status.as_ref().unwrap().contains("CONFIRMED"));
-        // SUMMARY, DESCRIPTION, LOCATION, ORGANIZER, ATTENDEE should not be kept
-        // (they are not in the whitelist)
+        assert!(event.valarms.is_empty());
     }
 
     #[test]
     fn test_output_has_summary_busy() {
         let content = load_fixture("simple");
-        let cal = parse_ics(&content).unwrap();
+        let cal = parse_ics(&content, &default_passthrough()).unwrap();
         let output = cal.to_ics_string();
         assert!(output.contains("SUMMARY:Busy"));
         assert!(output.contains("BEGIN:VCALENDAR"));
@@ -332,14 +388,14 @@ mod tests {
     #[test]
     fn test_cancelled_event_removed() {
         let content = load_fixture("cancelled");
-        let cal = parse_ics(&content).unwrap();
+        let cal = parse_ics(&content, &default_passthrough()).unwrap();
         assert_eq!(cal.events.len(), 0);
     }
 
     #[test]
     fn test_all_day_event() {
         let content = load_fixture("all_day");
-        let cal = parse_ics(&content).unwrap();
+        let cal = parse_ics(&content, &default_passthrough()).unwrap();
         assert_eq!(cal.events.len(), 1);
         let event = &cal.events[0];
         assert!(event.dtstart.contains("VALUE=DATE"));
@@ -351,7 +407,7 @@ mod tests {
     #[test]
     fn test_recurring_event() {
         let content = load_fixture("recurring");
-        let cal = parse_ics(&content).unwrap();
+        let cal = parse_ics(&content, &default_passthrough()).unwrap();
         assert_eq!(cal.events.len(), 1);
         let event = &cal.events[0];
         assert!(event.rrule.is_some());
@@ -362,7 +418,7 @@ mod tests {
     #[test]
     fn test_timezone_preserved() {
         let content = load_fixture("with_timezone");
-        let cal = parse_ics(&content).unwrap();
+        let cal = parse_ics(&content, &default_passthrough()).unwrap();
         let output = cal.to_ics_string();
         assert_eq!(cal.vtimezones.len(), 1);
         assert!(output.contains("BEGIN:VTIMEZONE"));
@@ -373,7 +429,7 @@ mod tests {
     #[test]
     fn test_x_properties_stripped() {
         let content = load_fixture("x_properties");
-        let cal = parse_ics(&content).unwrap();
+        let cal = parse_ics(&content, &default_passthrough()).unwrap();
         assert_eq!(cal.events.len(), 1);
         let output = cal.to_ics_string();
         assert!(!output.contains("X-MY-CUSTOM-PROP"));
@@ -385,7 +441,7 @@ mod tests {
     #[test]
     fn test_multiple_events() {
         let content = load_fixture("multiple_events");
-        let cal = parse_ics(&content).unwrap();
+        let cal = parse_ics(&content, &default_passthrough()).unwrap();
         assert_eq!(cal.events.len(), 3);
         let uids: Vec<&str> = cal
             .events
@@ -422,6 +478,7 @@ mod tests {
             recurrence_id: None,
             transp: None,
             status: None,
+            valarms: vec![],
         };
         let e2 = SanitizedEvent {
             uid: "UID:dup".into(),
@@ -434,6 +491,7 @@ mod tests {
             recurrence_id: None,
             transp: None,
             status: None,
+            valarms: vec![],
         };
         let other = SanitizedCalendar {
             vtimezones: vec![],
@@ -446,7 +504,7 @@ mod tests {
     #[test]
     fn test_duration_event() {
         let content = load_fixture("duration");
-        let cal = parse_ics(&content).unwrap();
+        let cal = parse_ics(&content, &default_passthrough()).unwrap();
         assert_eq!(cal.events.len(), 1);
         let event = &cal.events[0];
         assert!(event.duration.is_some());
@@ -455,17 +513,17 @@ mod tests {
 
     #[test]
     fn test_malformed_ics() {
-        let result = parse_ics("NOT VALID ICS CONTENT");
+        let result = parse_ics("NOT VALID ICS CONTENT", &default_passthrough());
         assert!(result.is_err());
     }
 
     #[test]
     fn test_output_is_valid_ics() {
         let content = load_fixture("simple");
-        let cal = parse_ics(&content).unwrap();
+        let cal = parse_ics(&content, &default_passthrough()).unwrap();
         let output = cal.to_ics_string();
         // Re-parse the output to verify it's valid ICS
-        let reparsed = parse_ics(&output).unwrap();
+        let reparsed = parse_ics(&output, &default_passthrough()).unwrap();
         assert_eq!(reparsed.events.len(), 1);
         assert!(output.starts_with("BEGIN:VCALENDAR\r\n"));
         assert!(output.ends_with("END:VCALENDAR\r\n"));
@@ -517,5 +575,96 @@ mod tests {
         assert_eq!(zones.len(), 2);
         assert!(zones[0].contains("America/New_York"));
         assert!(zones[1].contains("Europe/London"));
+    }
+
+    #[test]
+    fn test_alarms_are_stripped() {
+        let content = load_fixture("with_alarm");
+        let cal = parse_ics(&content, &default_passthrough()).unwrap();
+        assert_eq!(cal.events.len(), 1);
+        let output = cal.to_ics_string();
+        // Event should still be present (sanitized)
+        assert!(output.contains("SUMMARY:Busy"));
+        // But the alarm must be gone
+        assert!(!output.contains("VALARM"));
+        assert!(!output.contains("TRIGGER"));
+        assert!(!output.contains("DISPLAY"));
+        assert!(!output.contains("Reminder: Doctor Appointment"));
+    }
+
+    #[test]
+    fn test_alarms_preserved_when_enabled() {
+        let content = load_fixture("with_alarm");
+        let cal = parse_ics(&content, &alarms_passthrough()).unwrap();
+        assert_eq!(cal.events.len(), 1);
+        assert_eq!(cal.events[0].valarms.len(), 1);
+        let output = cal.to_ics_string();
+        assert!(output.contains("BEGIN:VALARM"));
+        assert!(output.contains("END:VALARM"));
+        assert!(output.contains("TRIGGER:-PT15M"));
+        assert!(output.contains("ACTION:DISPLAY"));
+        assert!(output.contains("DESCRIPTION:Reminder"));
+        // Original description should be sanitized
+        assert!(!output.contains("Doctor Appointment"));
+        assert!(!output.contains("Reminder: Doctor Appointment"));
+    }
+
+    #[test]
+    fn test_alarm_summary_sanitized() {
+        // Create an alarm with SUMMARY (for EMAIL action)
+        let mut props = vec![ical::property::Property {
+            name: "TRIGGER".into(),
+            params: None,
+            value: Some("-PT15M".into()),
+        }];
+        props.push(ical::property::Property {
+            name: "ACTION".into(),
+            params: None,
+            value: Some("EMAIL".into()),
+        });
+        props.push(ical::property::Property {
+            name: "SUMMARY".into(),
+            params: None,
+            value: Some("Upcoming: Doctor Appointment Tomorrow".into()),
+        });
+        props.push(ical::property::Property {
+            name: "DESCRIPTION".into(),
+            params: None,
+            value: Some("Don't forget your annual checkup at 10am".into()),
+        });
+
+        let alarm = ical::parser::ical::component::IcalAlarm { properties: props };
+        let result = serialize_alarm(&alarm).unwrap();
+        assert!(result.contains("SUMMARY:Calendar Alert"));
+        assert!(result.contains("DESCRIPTION:Reminder"));
+        assert!(result.contains("TRIGGER:-PT15M"));
+        assert!(result.contains("ACTION:EMAIL"));
+        assert!(!result.contains("Doctor Appointment"));
+        assert!(!result.contains("annual checkup"));
+    }
+
+    #[test]
+    fn test_alarm_empty_after_filtering_is_skipped() {
+        // Alarm with only DESCRIPTION (which we keep but override) should still exist
+        let alarm = ical::parser::ical::component::IcalAlarm {
+            properties: vec![ical::property::Property {
+                name: "DESCRIPTION".into(),
+                params: None,
+                value: Some("Test".into()),
+            }],
+        };
+        let result = serialize_alarm(&alarm);
+        assert!(result.is_some());
+        assert!(result.unwrap().contains("DESCRIPTION:Reminder"));
+
+        // Alarm with only ATTACH (which we strip) should be skipped entirely
+        let alarm2 = ical::parser::ical::component::IcalAlarm {
+            properties: vec![ical::property::Property {
+                name: "ATTACH".into(),
+                params: None,
+                value: Some("file:///sound.aiff".into()),
+            }],
+        };
+        assert!(serialize_alarm(&alarm2).is_none());
     }
 }

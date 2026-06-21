@@ -9,7 +9,13 @@ and serves a combined sanitized feed showing only busy/free blocks.
 ### 1. Get private ICS feed URLs
 
 - **iCloud**: Calendar → Share Calendar → Public Calendar → copy link
-- **Google Calendar**: Settings → Integrate Calendar → Private address → ICS
+- **Google Calendar**: Settings → Integrate Calendar → Private/Secret in iCal Format → copy link
+
+A couple quick notes about these options:
+
+1. For iCloud, this makes your calendar public, but it's still only visible with the URL. From what I can tell, it being "public" in this case does not mean someone can search or lookup your calendar in any way. It's public in the sense that if you have the URL, there's no authentication on it.
+
+2. For Google, the terminology is different. They call the URL a "private" or "secret" URL, but it's not protected any more or less than the iCloud URL. There is no auth requirement and anyone with the URL can view what's in it. This is compared to Google's concept of a public calendar which is searchable and visable to people without the link. Do *NOT* go that route, use the "private" or "secret" URL unless your calendar is really meant to be visible to the whole world.
 
 ### 2. Create `config.yaml`
 

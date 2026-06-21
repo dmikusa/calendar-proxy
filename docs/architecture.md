@@ -156,7 +156,23 @@ exclusive options.
 - Mutual exclusivity avoids ambiguity about which auth mechanism takes precedence
 - The mode is validated at startup, failing fast on misconfiguration
 
-### 3.9 Why Respect TRANSP:TRANSPARENT?
+### 3.9 Why Configurable VALARM Passthrough?
+
+**Decision:** Strip VALARM components by default, with an opt-in `passthrough.alarms`
+config option.
+
+**Rationale:**
+- VALARMs contain privacy-sensitive information (DESCRIPTION duplicates event titles,
+  TRIGGER offsets reveal event categorization, ATTACH leaks platform)
+- However, alarms are functionally important — users may want to be notified of
+  events even when the feed is anonymized
+- The compromise: allow preservation but sanitize DESCRIPTION to `"Reminder"` and
+  SUMMARY to `"Calendar Alert"`, and whitelist only the minimum properties needed to
+  fire an alarm (TRIGGER, ACTION, DURATION, REPEAT)
+- Per-calendar override allows selective preservation (e.g., alarms on a personal
+  calendar but not a shared work calendar)
+
+### 3.10 Why Respect TRANSP:TRANSPARENT?
 
 **Decision:** Pass through the `TRANSP` property unchanged. If the source event has
 `TRANSP:TRANSPARENT`, the output event will also have it, making it show as "Free"
@@ -181,7 +197,7 @@ in the consuming calendar.
 - Whitelist approach ensures no unknown properties leak
 - Special attention given to `X-*` properties, which calendar providers use
   extensively for non-standard data
-- `VALARM` components are stripped entirely (could reveal habits/timing patterns)
+- `VALARM` components are stripped entirely — `TRIGGER` offset (e.g., `-PT15M` vs `-P1DT9H`) varies by event type and can be used to infer categories. `DESCRIPTION` inside an alarm often redundantly duplicates the event title. `ACTION`, `DURATION`, `REPEAT`, and multiple alarms per event all leak behavioral patterns.
 - `CREATED`/`LAST-MODIFIED`/`DTSTAMP` are stripped (could reveal when you make changes)
 
 ### 4.3 TLS

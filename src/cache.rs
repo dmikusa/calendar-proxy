@@ -37,9 +37,17 @@ pub async fn refresh_cache(
     calendars: &[crate::config::CalendarSource],
     retry_count: u32,
     retry_backoff_secs: u64,
+    global_passthrough: &crate::config::PassthroughConfig,
     ready: Arc<RwLock<bool>>,
 ) {
-    match fetch_and_merge(calendars, retry_count, retry_backoff_secs).await {
+    match fetch_and_merge(
+        calendars,
+        retry_count,
+        retry_backoff_secs,
+        global_passthrough,
+    )
+    .await
+    {
         Ok(calendar) => {
             let ics = calendar.to_ics_string();
             if let Err(e) = manager.write_atomic(&ics) {
@@ -59,8 +67,15 @@ async fn fetch_and_merge(
     calendars: &[crate::config::CalendarSource],
     retry_count: u32,
     retry_backoff_secs: u64,
+    global_passthrough: &crate::config::PassthroughConfig,
 ) -> Result<crate::calendar::SanitizedCalendar, String> {
-    let results = fetch_all_calendars(calendars, retry_count, retry_backoff_secs).await;
+    let results = fetch_all_calendars(
+        calendars,
+        retry_count,
+        retry_backoff_secs,
+        global_passthrough,
+    )
+    .await;
     let mut merged = crate::calendar::SanitizedCalendar::new();
     let mut any_success = false;
 
@@ -87,6 +102,7 @@ async fn fetch_all_calendars(
     calendars: &[crate::config::CalendarSource],
     retry_count: u32,
     retry_backoff_secs: u64,
+    global_passthrough: &crate::config::PassthroughConfig,
 ) -> Vec<Result<crate::calendar::SanitizedCalendar, String>> {
     use futures::future::join_all;
 
@@ -100,8 +116,12 @@ async fn fetch_all_calendars(
         .map(|cal| {
             let client = client.clone();
             let url = cal.url.clone();
+            let passthrough = cal
+                .passthrough
+                .clone()
+                .unwrap_or_else(|| global_passthrough.clone());
             tokio::spawn(async move {
-                fetch_with_retry(&client, &url, retry_count, retry_backoff_secs).await
+                fetch_with_retry(&client, &url, retry_count, retry_backoff_secs, &passthrough).await
             })
         })
         .collect();
@@ -118,6 +138,7 @@ async fn fetch_with_retry(
     url: &str,
     max_retries: u32,
     initial_backoff_secs: u64,
+    passthrough: &crate::config::PassthroughConfig,
 ) -> Result<crate::calendar::SanitizedCalendar, String> {
     let mut attempt = 0u32;
     loop {
@@ -125,7 +146,8 @@ async fn fetch_with_retry(
             Ok(resp) => {
                 if resp.status().is_success() {
                     let body = resp.text().await.map_err(|e| format!("Read body: {e}"))?;
-                    return crate::calendar::parse_ics(&body);
+                    return crate::calendar::parse_ics(&body, passthrough)
+                        .map_err(|e| format!("Parse {url} failed: {e}"));
                 } else {
                     let status = resp.status();
                     return Err(format!("HTTP {status} for {url}"));

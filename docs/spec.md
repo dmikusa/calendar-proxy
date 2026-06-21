@@ -53,6 +53,30 @@ calendars:
 | `retry.backoff_secs` | integer | 5 | Initial retry delay (doubles each attempt) |
 | `auth` | object | — | Auth configuration (see below) |
 | `calendars` | array | (required) | List of source calendar URLs |
+| `passthrough` | object | — | Passthrough configuration (see §2.3) |
+| `passthrough.alarms` | bool | false | Preserve VALARM components in output |
+
+### 2.3 Passthrough
+
+Controls which iCalendar sub-components are preserved from source calendars. All passthrough
+options default to `false` (secure by default — information is stripped).
+
+When enabled, components are still sanitized (e.g., alarm DESCRIPTION is overridden to
+"Reminder") but the structural information (trigger time, action type) is preserved.
+
+**Per-calendar override:** Each calendar entry may specify its own `passthrough` section.
+If present, it completely replaces the global setting for that calendar. If absent, the
+calendar inherits the global setting.
+
+```yaml
+passthrough:
+  alarms: false                     # global default
+
+calendars:
+  - url: "https://example.com/cal.ics"
+    passthrough:
+      alarms: true                  # per-calendar override
+```
 
 ### 2.2 Auth Modes
 
@@ -169,12 +193,32 @@ Only the following VEVENT properties are retained. Everything else is stripped.
 | `CREATED` / `DTSTAMP` / `LAST-MODIFIED` | Leaks timing metadata |
 | `SEQUENCE` | Leaks revision history |
 | `COMMENT` | Leaks free-text notes |
-| `VALARM` | Leaks alarm patterns |
+| `VALARM` (entire component) | Leaks alarm patterns — `TRIGGER` offset (e.g., `-PT15M` vs `-P1DT9H`) reveals how far in advance the user sets reminders, which varies by event type and can be used to infer categories. `DESCRIPTION` inside an alarm often redundantly contains the event title or details. `ACTION` (DISPLAY/AUDIO/EMAIL) reveals notification preferences. Multiple alarms per event and `DURATION`/`REPEAT` further expose behavioral patterns. Enabled via `passthrough.alarms: true` (see §4.4). |
 | `COLOR` / `X-APPLE-CALENDAR-COLOR` | Leaks calendar organization |
 | `X-APPLE-STRUCTURED-LOCATION` | Leaks precise Apple location |
 | Any unknown property | Stripped by default |
 
-### 4.4 Merging & Deduplication
+### 4.4 VALARM Passthrough
+
+When `passthrough.alarms` is `true`, VALARM components from source events are preserved
+in the output. The following alarm properties are kept:
+
+| Property | Treatment | Reason |
+|---|---|---|
+| `TRIGGER` | Keep original | Functional — fires the alarm at the right time |
+| `ACTION` | Keep original | Functional — DISPLAY/AUDIO/EMAIL |
+| `DURATION` | Keep original | Functional — snooze length |
+| `REPEAT` | Keep original | Functional — repeat count |
+| `DESCRIPTION` | Override to `"Reminder"` | Most common leak vector |
+| `SUMMARY` | Override to `"Calendar Alert"` | Email subject line in EMAIL action |
+
+All other alarm properties (`ATTACH`, `X-*`, etc.) are stripped. If no whitelisted
+properties remain after filtering, the alarm is omitted entirely.
+
+This preserves the core alarm behavior (you are notified at the right time with a
+generic message) while minimizing information leakage.
+
+### 4.5 Merging & Deduplication
 
 - All sanitized events from all calendars are collected into a single list
 - Events are deduplicated by `UID` — first occurrence is kept, subsequent duplicates are
@@ -182,7 +226,7 @@ Only the following VEVENT properties are retained. Everything else is stripped.
 - VTIMEZONE blocks from all calendars are collected (duplicate TZIDs are resolved by
   keeping the first occurrence)
 
-### 4.5 Output Generation
+### 4.6 Output Generation
 
 The output is a valid iCalendar (RFC 5545) document:
 

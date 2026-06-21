@@ -11,6 +11,8 @@ pub struct Config {
     pub retry: RetryConfig,
     #[serde(default)]
     pub auth: AuthConfig,
+    #[serde(default)]
+    pub passthrough: PassthroughConfig,
     pub calendars: Vec<CalendarSource>,
 }
 
@@ -37,6 +39,14 @@ pub struct AuthConfig {
 #[derive(Debug, Clone, Deserialize)]
 pub struct CalendarSource {
     pub url: String,
+    #[serde(default)]
+    pub passthrough: Option<PassthroughConfig>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct PassthroughConfig {
+    #[serde(default)]
+    pub alarms: bool,
 }
 
 fn default_port() -> u16 {

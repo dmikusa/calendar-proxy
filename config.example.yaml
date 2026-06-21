@@ -31,7 +31,17 @@ auth:
 
   # If all fields are empty, no auth is required
 
+# Passthrough — configure which components to preserve from source calendars.
+# All passthrough options default to false (stripped).
+# Per-calendar passthrough overrides the global setting entirely.
+passthrough:
+  alarms: false           # Preserve VALARM components (default: stripped)
+
 # Source calendars to aggregate
 calendars:
   # - url: "https://pXX-caldav.icloud.com/.../calendar.ics"
+  #   passthrough:
+  #     alarms: true
+
   # - url: "https://calendar.google.com/calendar/ical/.../basic.ics"
+  #   # Inherits global passthrough setting
