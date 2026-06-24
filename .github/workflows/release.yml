@@ -41,7 +41,7 @@ jobs:
           echo "tag=${BASE}-${SHORT_HASH}-snapshot" >> "$GITHUB_OUTPUT"
 
       - name: Install pack CLI
-        uses: buildpacks/github-actions/setup-pack@8fe5c9d7f5a3fa22d4b7cc7d50ba8ebd7eddf414 # v5
+        uses: buildpacks/github-actions/setup-pack@8fe5c9d7f5a3fa22d4b7cc7d50ba8ebd7eddf414 # v5.12.4
 
       - name: Log in to GHCR
         uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4
