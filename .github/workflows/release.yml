@@ -140,8 +140,8 @@ jobs:
             echo "- Container image: \`${IMAGE}\`"
           } > notes.md
 
-          STATE=$(gh release view "$TAG" --json state --jq '.state' 2>/dev/null || echo "")
-          if [ "$STATE" = "DRAFT" ]; then
+          STATE=$(gh release view "$TAG" --json isDraft --jq '.isDraft' 2>/dev/null || echo "")
+          if [ "$STATE" = "true" ]; then
             echo "Updating existing draft release $TAG"
             gh release edit "$TAG" --notes-file notes.md
           elif [ -z "$STATE" ]; then
