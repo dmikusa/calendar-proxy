@@ -140,13 +140,16 @@ jobs:
             echo "- Container image: \`${IMAGE}\`"
           } > notes.md
 
-          if gh release view "$TAG" --draft &>/dev/null; then
-            echo "Release $TAG exists, uploading assets"
+          STATE=$(gh release view "$TAG" --json state --jq '.state' 2>/dev/null || echo "")
+          if [ "$STATE" = "DRAFT" ]; then
+            echo "Updating existing draft release $TAG"
             gh release edit "$TAG" --notes-file notes.md
-          else
+          elif [ -z "$STATE" ]; then
             echo "Creating draft release $TAG"
             gh release create "$TAG" --draft \
               --title "calendar-proxy $TAG" \
               --notes-file notes.md
+          else
+            echo "Release $TAG already published, skipping update"
           fi
           gh release upload "$TAG" artifacts/* --clobber
