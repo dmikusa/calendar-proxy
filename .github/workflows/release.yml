@@ -72,8 +72,21 @@ jobs:
           HASH_TAGS=$(echo "$ALL_TAGS" | grep -E '^[0-9]+\.[0-9]+\.[0-9]+-' | grep -v '\-release$' || true)
           for tag in $HASH_TAGS; do
             DIGEST=$(crane digest "${REPO}:${tag}" 2>/dev/null || true)
-            if [ -z "${PROTECTED_DIGESTS[${DIGEST}]-}" ]; then
-              crane delete "${REPO}:${tag}"
+            if [ -n "$DIGEST" ] && [ -z "${PROTECTED_DIGESTS[${DIGEST}]-}" ]; then
+              OTHER_TAGS=$(echo "$ALL_TAGS" | grep -v "^${tag}$" || true)
+              SHARED=false
+              for ot in $OTHER_TAGS; do
+                OT_DIGEST=$(crane digest "${REPO}:${ot}" 2>/dev/null || true)
+                if [ "$OT_DIGEST" = "$DIGEST" ]; then
+                  SHARED=true
+                  break
+                fi
+              done
+              if [ "$SHARED" = true ]; then
+                crane delete "${REPO}:${tag}"
+              else
+                crane delete "${REPO}@${DIGEST}"
+              fi
             fi
           done
 
