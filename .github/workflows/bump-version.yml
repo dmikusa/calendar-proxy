@@ -1,8 +1,12 @@
-name: Bump version after release
+name: Bump version
 
 on:
-  release:
-    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: New version (e.g. 0.2.0)
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -16,15 +20,39 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Bump patch version
+      - name: Validate version
+        env:
+          VERSION: ${{ inputs.version }}
         run: |
+          if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "Error: version '$VERSION' does not match semver (X.Y.Z)"
+            exit 1
+          fi
+
           CURRENT=$(grep '^version' Cargo.toml | head -1 | sed 's/.*= *"//; s/".*//')
-          MAJOR=$(echo "$CURRENT" | cut -d. -f1)
-          MINOR=$(echo "$CURRENT" | cut -d. -f2)
-          PATCH=$(echo "$CURRENT" | cut -d. -f3)
-          NEXT="${MAJOR}.${MINOR}.$((PATCH + 1))"
-          sed -i "s/^version = \"${CURRENT}\"/version = \"${NEXT}\"/" Cargo.toml
-          echo "Bumped ${CURRENT} → ${NEXT}"
+          CURRENT_MAJOR=$(echo "$CURRENT" | cut -d. -f1)
+          CURRENT_MINOR=$(echo "$CURRENT" | cut -d. -f2)
+          CURRENT_PATCH=$(echo "$CURRENT" | cut -d. -f3)
+          CURRENT_NUM=$((CURRENT_MAJOR * 1000000 + CURRENT_MINOR * 1000 + CURRENT_PATCH))
+
+          NEW_MAJOR=$(echo "$VERSION" | cut -d. -f1)
+          NEW_MINOR=$(echo "$VERSION" | cut -d. -f2)
+          NEW_PATCH=$(echo "$VERSION" | cut -d. -f3)
+          NEW_NUM=$((NEW_MAJOR * 1000000 + NEW_MINOR * 1000 + NEW_PATCH))
+
+          if [ "$NEW_NUM" -le "$CURRENT_NUM" ]; then
+            echo "Error: new version '$VERSION' must be greater than current version '$CURRENT'"
+            exit 1
+          fi
+
+          echo "Valid: ${CURRENT} → ${VERSION}"
+
+      - name: Bump version
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          sed -i "s/^version = \".*\"/version = \"${VERSION}\"/" Cargo.toml
+          echo "Bumped to ${VERSION}"
 
       - name: Update Cargo.lock
         run: cargo generate-lockfile
@@ -32,17 +60,17 @@ jobs:
       - name: Create pull request
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG_NAME: ${{ github.event.release.tag_name }}
+          VERSION: ${{ inputs.version }}
         run: |
-          BRANCH="bump-version-${GITHUB_SHA::7}"
+          BRANCH="bump-version-${VERSION}"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git checkout -b "$BRANCH"
           git add Cargo.toml Cargo.lock
-          git commit -m "chore: bump version after ${TAG_NAME}"
+          git commit -m "chore: bump version to ${VERSION}"
           git push origin "$BRANCH"
           PR_URL=$(gh pr create \
-            --title "chore: bump version after ${TAG_NAME}" \
-            --body "Automated version bump following the \`${TAG_NAME}\` release." \
+            --title "chore: bump version to ${VERSION}" \
+            --body "Version bump triggered manually." \
             --label dependencies)
           gh pr merge --auto --squash "$PR_URL"

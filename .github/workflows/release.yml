@@ -38,13 +38,10 @@ jobs:
           BASE: ${{ steps.version.outputs.base }}
         run: |
           SHORT_HASH=$(git rev-parse --short HEAD)
-          echo "tag=${BASE}-${SHORT_HASH}" >> "$GITHUB_OUTPUT"
+          echo "tag=${BASE}-${SHORT_HASH}-snapshot" >> "$GITHUB_OUTPUT"
 
       - name: Install pack CLI
         uses: buildpacks/github-actions/setup-pack@8fe5c9d7f5a3fa22d4b7cc7d50ba8ebd7eddf414 # v5
-
-      - name: Install crane
-        uses: buildpacks/github-actions/setup-tools@b4faaabcd9dbc5fa332451ae33bce8b583f3ec1b # v5.12.0
 
       - name: Log in to GHCR
         uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4
@@ -52,11 +49,6 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Delete stale hash tags
-        continue-on-error: true
-        run: |
-          bash scripts/cleanup-images.sh --repo ghcr.io/${{ github.repository }}
 
       - name: Build and publish OCI image
         env:
@@ -68,12 +60,6 @@ jobs:
             --run-image paketobuildpacks/ubuntu-noble-run-static \
             --cache-image ghcr.io/${{ github.repository }}:cache \
             --publish
-
-      - name: Tag image as latest
-        env:
-          IMAGE_TAG: ${{ steps.image_tag.outputs.tag }}
-        run: |
-          crane tag ghcr.io/${{ github.repository }}:${IMAGE_TAG} latest
 
   package:
     needs: build
@@ -125,24 +111,12 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      packages: write
       actions: read
 
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           persist-credentials: false
-          fetch-depth: 0
-
-      - name: Install crane
-        uses: buildpacks/github-actions/setup-tools@b4faaabcd9dbc5fa332451ae33bce8b583f3ec1b # v5.12.0
-
-      - name: Log in to GHCR
-        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Download compressed artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -176,10 +150,3 @@ jobs:
               --notes-file notes.md
           fi
           gh release upload "$TAG" artifacts/* --clobber
-
-      - name: Tag image as released
-        env:
-          VERSION: ${{ needs.build.outputs.version }}
-          IMAGE_TAG: ${{ needs.build.outputs.image_tag }}
-        run: |
-          crane tag ghcr.io/${{ github.repository }}:${IMAGE_TAG} ${VERSION}-release
