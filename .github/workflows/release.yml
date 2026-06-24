@@ -34,6 +34,9 @@ jobs:
       - name: Install pack CLI
         uses: buildpacks/github-actions/setup-pack@8fe5c9d7f5a3fa22d4b7cc7d50ba8ebd7eddf414 # v5
 
+      - name: Install crane
+        uses: buildpacks/github-actions/setup-tools@b4faaabcd9dbc5fa332451ae33bce8b583f3ec1b # v5.12.0
+
       - name: Log in to GHCR
         uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4
         with:
@@ -49,15 +52,12 @@ jobs:
             --buildpack paketo-community/rust \
             --builder paketobuildpacks/ubuntu-noble-builder \
             --run-image paketobuildpacks/ubuntu-noble-run-static \
+            --cache-image ghcr.io/${{ github.repository }}:cache \
             --publish
 
       - name: Tag image as latest
         run: |
-          pack build ghcr.io/${{ github.repository }}:latest \
-            --buildpack paketo-community/rust \
-            --builder paketobuildpacks/ubuntu-noble-builder \
-            --run-image paketobuildpacks/ubuntu-noble-run-static \
-            --publish
+          crane tag ghcr.io/${{ github.repository }}:${IMAGE_TAG} latest
 
   package:
     needs: build
@@ -85,7 +85,7 @@ jobs:
           docker rm "$CONTAINER_ID"
 
           BINARY_NAME="calendar-proxy"
-          BINARY_PATH=$(tar -tf /tmp/container.tar | grep -E "${BINARY_NAME}$" | head -1)
+          BINARY_PATH=$(tar -tf /tmp/container.tar | grep -E "bin/${BINARY_NAME}$" | head -1)
           if [ -z "$BINARY_PATH" ]; then
             echo "Binary not found in image" >&2
             exit 1
