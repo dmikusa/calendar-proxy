@@ -19,6 +19,7 @@ jobs:
       packages: write
     outputs:
       version: ${{ steps.version.outputs.base }}
+      image_tag: ${{ steps.image_tag.outputs.tag }}
 
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -30,6 +31,14 @@ jobs:
         run: |
           BASE_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*= *"//; s/".*//')
           echo "base=${BASE_VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Compute image tag
+        id: image_tag
+        env:
+          BASE: ${{ steps.version.outputs.base }}
+        run: |
+          SHORT_HASH=$(git rev-parse --short HEAD)
+          echo "tag=${BASE}-${SHORT_HASH}" >> "$GITHUB_OUTPUT"
 
       - name: Install pack CLI
         uses: buildpacks/github-actions/setup-pack@8fe5c9d7f5a3fa22d4b7cc7d50ba8ebd7eddf414 # v5
@@ -44,9 +53,33 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Delete stale hash tags
+        continue-on-error: true
+        env:
+          REPO: ghcr.io/${{ github.repository }}
+        run: |
+          ALL_TAGS=$(crane ls "${REPO}" || true)
+
+          RELEASE_TAGS=$(echo "$ALL_TAGS" | grep -E '^[0-9]+\.[0-9]+\.[0-9]+-release$' || true)
+          declare -A PROTECTED_DIGESTS
+          for tag in $RELEASE_TAGS; do
+            DIGEST=$(crane digest "${REPO}:${tag}" 2>/dev/null || true)
+            if [ -n "$DIGEST" ]; then
+              PROTECTED_DIGESTS["${DIGEST}"]=1
+            fi
+          done
+
+          HASH_TAGS=$(echo "$ALL_TAGS" | grep -E '^[0-9]+\.[0-9]+\.[0-9]+-' | grep -v '\-release$' || true)
+          for tag in $HASH_TAGS; do
+            DIGEST=$(crane digest "${REPO}:${tag}" 2>/dev/null || true)
+            if [ -z "${PROTECTED_DIGESTS[${DIGEST}]-}" ]; then
+              crane delete "${REPO}:${tag}"
+            fi
+          done
+
       - name: Build and publish OCI image
         env:
-          IMAGE_TAG: ${{ steps.version.outputs.base }}
+          IMAGE_TAG: ${{ steps.image_tag.outputs.tag }}
         run: |
           pack build ghcr.io/${{ github.repository }}:${IMAGE_TAG} \
             --buildpack paketo-community/rust \
@@ -56,6 +89,8 @@ jobs:
             --publish
 
       - name: Tag image as latest
+        env:
+          IMAGE_TAG: ${{ steps.image_tag.outputs.tag }}
         run: |
           crane tag ghcr.io/${{ github.repository }}:${IMAGE_TAG} latest
 
@@ -76,9 +111,9 @@ jobs:
 
       - name: Extract binary from image
         env:
-          VERSION: ${{ needs.build.outputs.version }}
+          IMAGE_TAG: ${{ needs.build.outputs.image_tag }}
         run: |
-          IMAGE="ghcr.io/${{ github.repository }}:${VERSION}"
+          IMAGE="ghcr.io/${{ github.repository }}:${IMAGE_TAG}"
           docker pull "$IMAGE"
           CONTAINER_ID=$(docker create "$IMAGE")
           docker export "$CONTAINER_ID" -o /tmp/container.tar
@@ -109,9 +144,25 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      packages: write
       actions: read
 
     steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Install crane
+        uses: buildpacks/github-actions/setup-tools@b4faaabcd9dbc5fa332451ae33bce8b583f3ec1b # v5.12.0
+
+      - name: Log in to GHCR
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Download compressed artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
@@ -123,9 +174,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ needs.build.outputs.version }}
+          IMAGE_TAG: ${{ needs.build.outputs.image_tag }}
         run: |
           TAG="v${VERSION}"
-          IMAGE="ghcr.io/${{ github.repository }}:${VERSION}"
+          IMAGE="ghcr.io/${{ github.repository }}:${IMAGE_TAG}"
 
           {
             echo "Release candidate for $TAG"
@@ -143,3 +195,10 @@ jobs:
               --notes-file notes.md
           fi
           gh release upload "$TAG" artifacts/* --clobber
+
+      - name: Tag image as released
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+          IMAGE_TAG: ${{ needs.build.outputs.image_tag }}
+        run: |
+          crane tag ghcr.io/${{ github.repository }}:${IMAGE_TAG} ${VERSION}-release
