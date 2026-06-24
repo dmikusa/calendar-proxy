@@ -6,25 +6,22 @@ on:
 
 permissions:
   contents: read
-  packages: write
 
 concurrency:
   group: release
   cancel-in-progress: true
 
-env:
-  CARGO_TERM_COLOR: always
-
 jobs:
   build:
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-
-    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.base }}
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           persist-credentials: false
 
@@ -32,35 +29,23 @@ jobs:
         id: version
         run: |
           BASE_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*= *"//; s/".*//')
-          COMMIT=$(git rev-parse --short HEAD)
           echo "base=${BASE_VERSION}" >> "$GITHUB_OUTPUT"
-          echo "full=${BASE_VERSION}-${COMMIT}" >> "$GITHUB_OUTPUT"
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Build release binary
-        run: cargo build --release --locked
-
-      - name: Upload binary artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: calendar-proxy-${{ steps.version.outputs.full }}
-          path: target/release/calendar-proxy
 
       - name: Install pack CLI
-        uses: buildpacks/github-actions/setup-pack@v5
+        uses: buildpacks/github-actions/setup-pack@8fe5c9d7f5a3fa22d4b7cc7d50ba8ebd7eddf414 # v5
 
       - name: Log in to GHCR
-        uses: docker/login-action@v4
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and publish OCI image
+        env:
+          IMAGE_TAG: ${{ steps.version.outputs.base }}
         run: |
-          pack build ghcr.io/${{ github.repository }}:${{ steps.version.outputs.full }} \
+          pack build ghcr.io/${{ github.repository }}:${IMAGE_TAG} \
             --buildpack paketo-community/rust \
             --builder paketobuildpacks/ubuntu-noble-builder \
             --run-image paketobuildpacks/ubuntu-noble-run-static \
@@ -74,41 +59,87 @@ jobs:
             --run-image paketobuildpacks/ubuntu-noble-run-static \
             --publish
 
-  release:
+  package:
     needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract binary from image
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          IMAGE="ghcr.io/${{ github.repository }}:${VERSION}"
+          docker pull "$IMAGE"
+          CONTAINER_ID=$(docker create "$IMAGE")
+          docker export "$CONTAINER_ID" -o /tmp/container.tar
+          docker rm "$CONTAINER_ID"
+
+          BINARY_NAME="calendar-proxy"
+          BINARY_PATH=$(tar -tf /tmp/container.tar | grep -E "${BINARY_NAME}$" | head -1)
+          if [ -z "$BINARY_PATH" ]; then
+            echo "Binary not found in image" >&2
+            exit 1
+          fi
+          tar -xf /tmp/container.tar -C /tmp "$BINARY_PATH"
+          cp "/tmp/$BINARY_PATH" ./calendar-proxy
+
+      - name: Compress binary
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+        run: gzip -c calendar-proxy > calendar-proxy-${VERSION}.gz
+
+      - name: Upload compressed artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: calendar-proxy-${{ needs.build.outputs.version }}.gz
+          path: calendar-proxy-${{ needs.build.outputs.version }}.gz
+
+  release:
+    needs: [build, package]
     runs-on: ubuntu-latest
     permissions:
       contents: write
       actions: read
+
     steps:
-      - uses: actions/checkout@v6
-        with:
-          persist-credentials: false
-
-      - name: Compute version
-        id: version
-        run: |
-          BASE_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*= *"//; s/".*//')
-          echo "base=${BASE_VERSION}" >> "$GITHUB_OUTPUT"
-
-      - name: Download binary artifact
-        uses: actions/download-artifact@v8
+      - name: Download compressed artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           path: artifacts
-          pattern: calendar-proxy-*
+          pattern: calendar-proxy-*.gz
           merge-multiple: true
 
       - name: Create or update draft release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.build.outputs.version }}
         run: |
-          TAG="v${{ steps.version.outputs.base }}"
+          TAG="v${VERSION}"
+          IMAGE="ghcr.io/${{ github.repository }}:${VERSION}"
+
+          {
+            echo "Release candidate for $TAG"
+            echo ""
+            echo "- Container image: \`${IMAGE}\`"
+          } > notes.md
+
           if gh release view "$TAG" --draft &>/dev/null; then
             echo "Release $TAG exists, uploading assets"
+            gh release edit "$TAG" --notes-file notes.md
           else
             echo "Creating draft release $TAG"
-            gh release create "$TAG" --draft --generate-notes \
-              --title "calendar-proxy v${{ steps.version.outputs.base }}" \
-              --notes "Release candidate for v${{ steps.version.outputs.base }}"
+            gh release create "$TAG" --draft \
+              --title "calendar-proxy $TAG" \
+              --notes-file notes.md
           fi
           gh release upload "$TAG" artifacts/* --clobber
