@@ -4,6 +4,20 @@ A lightweight HTTP service that aggregates multiple iCalendar (ICS) feeds from i
 Google Calendar, or any service offering a private ICS feed, anonymizes event details,
 and serves a combined sanitized feed showing only busy/free blocks.
 
+## Why?
+
+At work, my laptop is locked down. I can't login with my Apple or Google accounts, so
+I can't access my personal calendars. It's hard to schedule a meeting, if you can't
+see when you were supposed to pick up the kids or drop the car off for an oil change.
+
+I got tired of flipping between my phone and my work calendar. I just wanted everything
+in one place.
+
+This proxy is a way to expose your personal calendars as an ICS feed to your work
+calendar. Your personal events are sanitized so your employer can't see them, but you
+get place holders, and alerts if you want them, all in one place through your work
+calendar. No more conflicting work and personal meetings.
+
 ## Quick Start
 
 ### 1. Get private ICS feed URLs
