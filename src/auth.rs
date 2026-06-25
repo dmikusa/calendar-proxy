@@ -52,7 +52,6 @@ impl IntoResponse for AuthError {
 
 pub struct Authenticated;
 
-#[async_trait::async_trait]
 impl<S> FromRequestParts<S> for Authenticated
 where
     S: Send + Sync,
