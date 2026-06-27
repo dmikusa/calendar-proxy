@@ -58,7 +58,7 @@ jobs:
             --buildpack paketo-community/rust \
             --builder paketobuildpacks/ubuntu-noble-builder \
             --run-image paketobuildpacks/ubuntu-noble-run-static \
-            --env BP_RUST_TARGET="x86_64-unknown-linux-musl" \
+            --env BP_RUSTUP_INIT_LIBC=musl \
             --env BP_CARGO_INSTALL_ARGS="--locked --target x86_64-unknown-linux-musl" \
             --cache-image ghcr.io/${{ github.repository }}:cache \
             --publish
