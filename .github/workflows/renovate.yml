@@ -31,5 +31,5 @@ jobs:
           LOG_LEVEL: ${{ inputs.logLevel || 'info' }}
           RENOVATE_TOKEN: ${{ secrets.RENOVATE_TOKEN }}
           RENOVATE_REPOSITORIES: ${{ github.repository }}
-          RENOVATE_GIT_AUTHOR: "renovate[bot] <renovate-bot@mikusa.com>"
+          RENOVATE_GIT_AUTHOR: Daniel Mikusa <dmikusa@users.noreply.github.com>
 
