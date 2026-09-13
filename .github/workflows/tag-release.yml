@@ -28,7 +28,7 @@ jobs:
           echo "short_hash=${SHORT_HASH}" >> "$GITHUB_OUTPUT"
 
       - name: Install crane
-        uses: buildpacks/github-actions/setup-tools@36416a96be10a6cc7170e7c9c63656d4092f78b2 # v6.1.0
+        uses: buildpacks/github-actions/setup-tools@af8c06ccd592e27001cbf78083dcc9b47aa6652a # v6.1.1
 
       - name: Log in to GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
