@@ -148,12 +148,13 @@ jobs:
           if [ "$STATE" = "true" ]; then
             echo "Updating existing draft release $TAG"
             gh release edit "$TAG" --notes-file notes.md
+            gh release upload "$TAG" artifacts/* --clobber
           elif [ -z "$STATE" ]; then
             echo "Creating draft release $TAG"
             gh release create "$TAG" --draft \
               --title "calendar-proxy $TAG" \
               --notes-file notes.md
+            gh release upload "$TAG" artifacts/* --clobber
           else
-            echo "Release $TAG already published, skipping update"
+            echo "Release $TAG is already published, leaving it alone"
           fi
-          gh release upload "$TAG" artifacts/* --clobber
