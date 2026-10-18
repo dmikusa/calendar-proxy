@@ -156,6 +156,13 @@ repository setting, and a PAT-driven merge triggers `release.yml` normally. Beca
 the PAT carries the write permissions, the workflow itself only asks for
 `contents: read`.
 
+Checkout is deliberately not given the PAT. Passing it would make the PAT the
+token that `actions/checkout` writes into its temporary credential file, and there
+is no reason for that: the repo is public, so the job's read-only `GITHUB_TOKEN`
+is enough to clone it. The PAT is only present in the environment of the two
+steps that need it, and `gh auth setup-git` records the `gh` credential helper
+rather than the token itself.
+
 ## Repository settings this depends on
 
 | Setting | Required value | Where |

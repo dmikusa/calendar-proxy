@@ -22,8 +22,10 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # No `token:` on purpose. Checkout falls back to the job's read-only
+          # GITHUB_TOKEN, so the PAT is never written to disk as a git
+          # credential. The push is authenticated by `gh auth setup-git` below.
           persist-credentials: false
-          token: ${{ secrets.RENOVATE_TOKEN }}
 
       - name: Configure git credentials
         env:
