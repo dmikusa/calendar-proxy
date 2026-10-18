@@ -9,7 +9,11 @@ permissions:
 
 concurrency:
   group: release
-  cancel-in-progress: true
+  # Queue rather than cancel. Cancelling a run in flight can leave a snapshot
+  # image published with no release pointing at it, and can kill the release
+  # job midway through writing a draft. Only one run waits at a time, so a
+  # burst of pushes still collapses to the newest one.
+  cancel-in-progress: false
 
 jobs:
   build:
