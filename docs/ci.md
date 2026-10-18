@@ -43,7 +43,8 @@ updates wait for approval on the dashboard.
 
 ## Version bump (`bump-version.yml`)
 
-Manual dispatch with a `version` input, used to cut a release.
+Manual dispatch with a `version` input. It sets the version that the next release
+will carry.
 
 The version has to match `X.Y.Z` and has to be greater than the version currently
 in `Cargo.toml`. Comparison is numeric on each part (`major * 1000000 + minor *
@@ -55,6 +56,25 @@ enables squash auto-merge on it.
 Merging that PR puts the new version on `main`, and that is what makes the next
 build a release candidate. Nothing else in the repo sets the version, so a release
 can't happen without this workflow or an equivalent hand edit.
+
+### When in the cycle this runs
+
+It runs before the release it produces. The bump is the first step of cutting a
+release: it decides the version, `release.yml` builds it and opens a draft, and
+publishing that draft is what makes it a release. On its own the bump releases
+nothing.
+
+Seen across two releases, a bump sits between them. It comes after the previous
+release is published and before the next one goes out. Running it as soon as the
+previous release is published is the habit that avoids trouble: `main` always
+names the next version, and the draft for that version picks up work as it lands.
+Cutting a release then means reviewing the current draft and publishing it.
+
+Running it late works too, as long as nothing else reaches `main` first.
+`release.yml` reads the version from `Cargo.toml` on every push, so while `main`
+still names a version that is already published, each push rebuilds that version
+and re-uploads the binary onto its release. That is the first item in [Known
+rough edges](#known-rough-edges).
 
 This job runs as a PAT, not as `GITHUB_TOKEN`. The reasoning is in [Why the
 version bump uses a PAT](#why-the-version-bump-uses-a-pat).
@@ -107,6 +127,7 @@ graph TD
     MERGE --> REL["release.yml on push to main<br/>build + publish snapshot image<br/>package the binary<br/>create or update draft release vX.Y.Z"]
     REL --> PUB["A human reviews and publishes the draft"]
     PUB --> TAG["tag-release.yml<br/>retag the snapshot image as X.Y.Z and latest"]
+    TAG -.->|"bump the next version"| BUMP
 ```
 
 The draft release is the gate. Everything up to it runs on its own, and nothing
@@ -151,8 +172,8 @@ the PAT carries the write permissions, the workflow itself only asks for
 Publishing a release is treated as the end of a version, but nothing enforces
 that. After `v0.1.1` is published, `Cargo.toml` still says `0.1.1`, so the next
 push to `main` builds another `0.1.1` snapshot and re-uploads the binary onto the
-already-published release. Bump the version before landing more work on `main` if
-you don't want that.
+already-published release. Bumping as soon as a release is published keeps that
+from happening; see [When in the cycle this runs](#when-in-the-cycle-this-runs).
 
 The snapshot tag is computed in two places. `release.yml` uses `git rev-parse
 --short HEAD`, which lets Git pick the abbreviation length, while `tag-release.yml`
