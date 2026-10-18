@@ -55,7 +55,9 @@ enables squash auto-merge on it.
 
 Merging that PR puts the new version on `main`, and that is what makes the next
 build a release candidate. Nothing else in the repo sets the version, so a release
-can't happen without this workflow or an equivalent hand edit.
+can't happen without this workflow or an equivalent hand edit. The commit is
+authored as the PAT's owner, so the commit, the PR and the merge all carry the same
+identity rather than mixing a bot commit with a human merge.
 
 ### When in the cycle this runs
 
@@ -172,7 +174,46 @@ rather than the token itself.
 | `dependencies` label | Must exist | Issues, Labels. Both Renovate and the bump workflow apply it |
 | Allow GitHub Actions to create and approve pull requests | Can stay off | Settings, Actions, General |
 | Default workflow permissions | `read` is fine | Settings, Actions, General. Each workflow declares what it needs |
-| Branch protection or a ruleset on `main` | Optional | Without it, auto-merge merges as soon as the PR is openable |
+| Ruleset on `main` | Active | Repository rulesets. See [The ruleset on `main`](#the-ruleset-on-main) |
+
+## The ruleset on `main`
+
+A repository ruleset named `main` protects the default branch. The classic branch
+protection API reports the branch as unprotected, which is a false negative: the
+two mechanisms are separate, and rulesets are the newer one.
+
+The ruleset is active and applies to `~DEFAULT_BRANCH`. It requires:
+
+| Rule | Effect |
+|---|---|
+| `pull_request` | Changes reach `main` through a PR. Zero approving reviews are required |
+| `required_status_checks` | `test` and `Run zizmor 🌈` must pass. Strict policy is on, so the PR branch must also be up to date with `main` |
+| `required_signatures` | Commits on `main` must be signed |
+| `deletion`, `non_fast_forward`, `creation` | `main` cannot be deleted or force-pushed |
+
+The two required checks are job names from `ci.yml`, matched by their *display*
+names, so renaming the `test` job or the zizmor job there would leave the ruleset
+waiting on a check that never reports.
+
+One bypass actor is configured: the repository admin role, with mode `always`.
+Admin merges are not held to the rules above, and the effect shows up in the
+history: unsigned dependency commits such as `21a69ae` and `4f1dc95` sit on `main`
+today, carried there by signed merge commits.
+
+So the ruleset is a real gate for anyone who is not an admin, and a guardrail
+against accidents for anyone who is. It is not a guarantee that a particular merge
+waited for CI.
+
+Whether it gates the version bump depends on who owns `RENOVATE_TOKEN`, which
+isn't recorded in the repo. If that account is a repository admin, its merge can
+bypass the required checks. If it isn't, the checks have to pass for the merge to
+go through.
+
+Related, and worth knowing before narrowing that bypass: the bump workflow builds
+its commit in CI, where there is no signing key, so the commit is unsigned. It
+rides in on an admin merge today. Under `required_signatures` without the bypass,
+it would need another route, such as creating the commit through the GitHub API,
+which signs the commits it creates.
 
 ## Known rough edges
 
@@ -187,9 +228,10 @@ The snapshot tag is computed in two places. `release.yml` uses `git rev-parse
 uses `--short=7`. Both produce 7 characters at this repo's size, but a larger repo
 would let them drift apart and the `crane tag` step would fail to find the image.
 
-Auto-merge runs without a required status check, so with no protection on `main`
-the bump PR can merge before CI has reported. Adding a ruleset that requires the CI
-checks makes the gate real.
+Auto-merge on the bump PR is not a hard CI gate, but for a different reason than
+"nothing protects `main`". The ruleset does require the `test` and `Run zizmor 🌈`
+checks; the admin bypass means the merge isn't held to them. See [The ruleset on
+`main`](#the-ruleset-on-main).
 
 ## Running the same checks locally
 
