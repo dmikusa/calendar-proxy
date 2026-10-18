@@ -49,9 +49,17 @@ will carry.
 The version has to match `X.Y.Z` and has to be greater than the version currently
 in `Cargo.toml`. Comparison is numeric on each part (`major * 1000000 + minor *
 1000 + patch`), not a string compare. If it passes, the workflow rewrites
-`Cargo.toml`, refreshes `Cargo.lock` with `cargo generate-lockfile`, pushes a
-branch named `bump-version-<version>`, opens a PR labeled `dependencies`, and
-enables squash auto-merge on it.
+`Cargo.toml`, syncs the root package's entry in `Cargo.lock`, pushes a branch named
+`bump-version-<version>`, opens a PR labeled `dependencies`, and enables squash
+auto-merge on it.
+
+The lockfile is synced with `cargo update -p calendar-proxy`, which rewrites the
+one line that holds the root package's version. Not `cargo generate-lockfile`:
+that re-resolves the whole graph rather than honouring the pins already in the
+lock, so it drags every pending upgrade into the version bump commit. In practice
+that was around a hundred package versions per bump, and it bypassed the
+release-age policy in `renovate.json` while it did it. Dependency updates belong
+to Renovate.
 
 Merging that PR puts the new version on `main`, and that is what makes the next
 build a release candidate. Nothing else in the repo sets the version, so a release
@@ -75,8 +83,8 @@ Cutting a release then means reviewing the current draft and publishing it.
 Running it late works too, as long as nothing else reaches `main` first.
 `release.yml` reads the version from `Cargo.toml` on every push, so while `main`
 still names a version that is already published, each push rebuilds that version
-and re-uploads the binary onto its release. That is the first item in [Known
-rough edges](#known-rough-edges).
+and publishes a snapshot image that no release will ever reference. That is the
+first item in [Known rough edges](#known-rough-edges).
 
 This job runs as a PAT, not as `GITHUB_TOKEN`. The reasoning is in [Why the
 version bump uses a PAT](#why-the-version-bump-uses-a-pat).
@@ -102,13 +110,17 @@ never builds Rust a second time. Its permissions are `contents: read` and
 The `release` job downloads the artifact and creates the draft release
 `v<version>` with a placeholder body: the tag and the container image reference.
 If `v<version>` already exists as a draft, it updates the notes and re-uploads the
-asset with `--clobber`. If `v<version>` is already published, it leaves the notes
-alone but still uploads the asset. Its permissions are `contents: write` and
-`actions: read`.
+asset with `--clobber`. If `v<version>` is already published, it does nothing at
+all, so a later push to `main` cannot overwrite the binary attached to a released
+version. Its permissions are `contents: write` and `actions: read`.
 
-A concurrency group named `release` with `cancel-in-progress: true` serializes
-runs. Two pushes close together cancel the older build, and only the newest one
-finishes.
+A concurrency group named `release` queues runs rather than cancelling them. Two
+pushes close together leave the first run to finish and hold the second until it
+does, so the in-flight build is never interrupted. Interrupting one is not free:
+a cancelled run has already published its snapshot image by the time it reaches
+the later jobs, which leaves an image nothing points at, and the cancellation can
+land between creating a draft release and uploading its asset. Only one run waits
+at a time, so a burst of pushes collapses to the newest one.
 
 ## Tagging the release image (`tag-release.yml`)
 
@@ -219,9 +231,10 @@ which signs the commits it creates.
 
 Publishing a release is treated as the end of a version, but nothing enforces
 that. After `v0.1.1` is published, `Cargo.toml` still says `0.1.1`, so the next
-push to `main` builds another `0.1.1` snapshot and re-uploads the binary onto the
-already-published release. Bumping as soon as a release is published keeps that
-from happening; see [When in the cycle this runs](#when-in-the-cycle-this-runs).
+push to `main` builds and publishes another `0.1.1` snapshot image. The release job
+leaves the published release alone, so nothing points at that image and it is
+orphaned. The build is wasted; bump as soon as a release is published to avoid it.
+See [When in the cycle this runs](#when-in-the-cycle-this-runs).
 
 The snapshot tag is computed in two places. `release.yml` uses `git rev-parse
 --short HEAD`, which lets Git pick the abbreviation length, while `tag-release.yml`
