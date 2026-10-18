@@ -8,9 +8,13 @@ on:
         required: true
         type: string
 
+# The default GITHUB_TOKEN cannot be used for this job. It is refused by the
+# repository's "Allow GitHub Actions to create and approve pull requests"
+# setting, and a merge it performs is attributed to github-actions[bot], whose
+# pushes do not trigger the release workflow. A PAT is used instead so the
+# merge fires `release.yml`.
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 jobs:
   bump:
@@ -19,6 +23,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          token: ${{ secrets.RENOVATE_TOKEN }}
+
+      - name: Configure git credentials
+        env:
+          GH_TOKEN: ${{ secrets.RENOVATE_TOKEN }}
+        run: gh auth setup-git
 
       - name: Validate version
         env:
@@ -59,7 +69,7 @@ jobs:
 
       - name: Create pull request
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.RENOVATE_TOKEN }}
           VERSION: ${{ inputs.version }}
         run: |
           BRANCH="bump-version-${VERSION}"
