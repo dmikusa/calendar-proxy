@@ -81,6 +81,7 @@ See [docs/spec.md](docs/spec.md) for full config reference.
 |---|---|
 | [docs/spec.md](docs/spec.md) | Complete application specification |
 | [docs/architecture.md](docs/architecture.md) | Architecture and design decisions |
+| [docs/ci.md](docs/ci.md) | CI/CD workflows and how a release gets produced |
 | [docs/plan.md](docs/plan.md) | Implementation plan and task list |
 
 ## Endpoints

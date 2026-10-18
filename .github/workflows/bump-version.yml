@@ -8,9 +8,13 @@ on:
         required: true
         type: string
 
+# The default GITHUB_TOKEN cannot be used for this job. It is refused by the
+# repository's "Allow GitHub Actions to create and approve pull requests"
+# setting, and a merge it performs is attributed to github-actions[bot], whose
+# pushes do not trigger the release workflow. A PAT is used instead so the
+# merge fires `release.yml`.
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 jobs:
   bump:
@@ -18,13 +22,25 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # No `token:` on purpose. Checkout falls back to the job's read-only
+          # GITHUB_TOKEN, so the PAT is never written to disk as a git
+          # credential. The push is authenticated by `gh auth setup-git` below.
           persist-credentials: false
+
+      - name: Configure git credentials
+        env:
+          GH_TOKEN: ${{ secrets.RENOVATE_TOKEN }}
+        # Records a credential helper (the `gh` binary plus arguments) in the
+        # runner's global git config. The token is not written anywhere: the
+        # helper reads GH_TOKEN from the environment when git asks it to
+        # authenticate, which happens in the step below.
+        run: gh auth setup-git
 
       - name: Validate version
         env:
           VERSION: ${{ inputs.version }}
         run: |
-          if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "Error: version '$VERSION' does not match semver (X.Y.Z)"
             exit 1
           fi
@@ -59,12 +75,17 @@ jobs:
 
       - name: Create pull request
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.RENOVATE_TOKEN }}
           VERSION: ${{ inputs.version }}
         run: |
           BRANCH="bump-version-${VERSION}"
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          # Author the commit as the PAT's owner, so the commit, the pull
+          # request and the merge all show the same identity instead of a bot
+          # commit landing under a human's merge.
+          AUTHOR=$(gh api user --jq .login)
+          AUTHOR_ID=$(gh api user --jq .id)
+          git config user.name "$AUTHOR"
+          git config user.email "${AUTHOR_ID}+${AUTHOR}@users.noreply.github.com"
           git checkout -b "$BRANCH"
           git add Cargo.toml Cargo.lock
           git commit -m "chore: bump version to ${VERSION}"
