@@ -9,7 +9,7 @@ published release, and keeping dependencies current.
 | Workflow | File | Runs on | What it does |
 |---|---|---|---|
 | CI | `ci.yml` | PR targeting `main`, push to `main` | Format check, clippy, tests, plus a zizmor scan of the workflow files |
-| Build and Release | `release.yml` | Push to `main` | Builds a snapshot OCI image, extracts the binary, creates or updates a draft release |
+| Build and Release | `release.yml` | Push to `main` | Builds a snapshot OCI image, extracts the binary, and creates or updates a draft release. Skipped when the version is already published |
 | Tag release image | `tag-release.yml` | A release is published | Retags the snapshot image as the release version and `latest` |
 | Bump version | `bump-version.yml` | Manual (`workflow_dispatch`) | Bumps `Cargo.toml`, opens a PR, enables auto-merge |
 | Renovate | `renovate.yml` | Daily at 04:00 UTC, or manual | Runs self-hosted Renovate to open dependency PRs |
@@ -49,9 +49,17 @@ will carry.
 The version has to match `X.Y.Z` and has to be greater than the version currently
 in `Cargo.toml`. Comparison is numeric on each part (`major * 1000000 + minor *
 1000 + patch`), not a string compare. If it passes, the workflow rewrites
-`Cargo.toml`, refreshes `Cargo.lock` with `cargo generate-lockfile`, pushes a
-branch named `bump-version-<version>`, opens a PR labeled `dependencies`, and
-enables squash auto-merge on it.
+`Cargo.toml`, syncs the root package's entry in `Cargo.lock`, pushes a branch named
+`bump-version-<version>`, opens a PR labeled `dependencies`, and enables squash
+auto-merge on it.
+
+The lockfile is synced with `cargo update -p calendar-proxy`, which rewrites the
+one line that holds the root package's version. Not `cargo generate-lockfile`:
+that re-resolves the whole graph rather than honouring the pins already in the
+lock, so it drags every pending upgrade into the version bump commit. In practice
+that was around a hundred package versions per bump, and it bypassed the
+release-age policy in `renovate.json` while it did it. Dependency updates belong
+to Renovate.
 
 Merging that PR puts the new version on `main`, and that is what makes the next
 build a release candidate. Nothing else in the repo sets the version, so a release
@@ -72,11 +80,11 @@ previous release is published is the habit that avoids trouble: `main` always
 names the next version, and the draft for that version picks up work as it lands.
 Cutting a release then means reviewing the current draft and publishing it.
 
-Running it late works too, as long as nothing else reaches `main` first.
-`release.yml` reads the version from `Cargo.toml` on every push, so while `main`
-still names a version that is already published, each push rebuilds that version
-and re-uploads the binary onto its release. That is the first item in [Known
-rough edges](#known-rough-edges).
+Running it late works too, as long as nothing else reaches `main` first. While
+`main` still names a version that is already published, a push to `main` builds
+nothing, because `release.yml` checks for a published release before it starts.
+The push is silently a no-op for the release pipeline, which is easy to mistake
+for a broken workflow. That is the first item in [Known rough edges](#known-rough-edges).
 
 This job runs as a PAT, not as `GITHUB_TOKEN`. The reasoning is in [Why the
 version bump uses a PAT](#why-the-version-bump-uses-a-pat).
@@ -84,14 +92,20 @@ version bump uses a PAT](#why-the-version-bump-uses-a-pat).
 ## Build and release (`release.yml`)
 
 Triggered by every push to `main`, which includes dependency merges and version
-bumps. Three jobs run in order via `needs`.
+bumps. Four jobs run in order via `needs`.
 
-The `build` job reads the base version out of `Cargo.toml` and builds the image
-tag `<version>-<short-sha>-snapshot`. It logs in to GHCR and runs `pack build
---publish` against `paketobuildpacks/ubuntu-noble-builder` with the
-`paketo-community/rust` buildpack and the `ubuntu-noble-run-tiny` run image.
-`ghcr.io/<repo>:cache` holds the build cache. Permissions are `contents: read` and
-`packages: write`.
+The `check` job decides whether the push is worth building at all. It reads the
+version out of `Cargo.toml` and asks whether `v<version>` is already published. If
+it is, a published release is final, so the push builds nothing. Its only
+permission is `contents: read`.
+
+The `build` job is skipped when that answer is no, and `package` and `release`
+follow it, because both `need` it. When it does run, it reads the base version out
+of `Cargo.toml` and builds the image tag `<version>-<short-sha>-snapshot`. It logs
+in to GHCR and runs `pack build --publish` against
+`paketobuildpacks/ubuntu-noble-builder` with the `paketo-community/rust` buildpack
+and the `ubuntu-noble-run-tiny` run image. `ghcr.io/<repo>:cache` holds the build
+cache. Permissions are `contents: read` and `packages: write`.
 
 The `package` job pulls the image that was just published, exports the container
 filesystem, and copies `bin/calendar-proxy` out of it. That binary is gzipped to
@@ -102,13 +116,18 @@ never builds Rust a second time. Its permissions are `contents: read` and
 The `release` job downloads the artifact and creates the draft release
 `v<version>` with a placeholder body: the tag and the container image reference.
 If `v<version>` already exists as a draft, it updates the notes and re-uploads the
-asset with `--clobber`. If `v<version>` is already published, it leaves the notes
-alone but still uploads the asset. Its permissions are `contents: write` and
-`actions: read`.
+asset with `--clobber`. If `v<version>` is already published, it does nothing at
+all. That branch is rare now that `check` runs first, but it still happens if
+someone publishes the draft while the build is running. Its permissions are
+`contents: write` and `actions: read`.
 
-A concurrency group named `release` with `cancel-in-progress: true` serializes
-runs. Two pushes close together cancel the older build, and only the newest one
-finishes.
+A concurrency group named `release` queues runs rather than cancelling them. Two
+pushes close together leave the first run to finish and hold the second until it
+does, so the in-flight build is never interrupted. Interrupting one is not free:
+a cancelled run has already published its snapshot image by the time it reaches
+the later jobs, which leaves an image nothing points at, and the cancellation can
+land between creating a draft release and uploading its asset. Only one run waits
+at a time, so a burst of pushes collapses to the newest one.
 
 ## Tagging the release image (`tag-release.yml`)
 
@@ -126,7 +145,7 @@ graph TD
     PR --> CI["CI on the PR: fmt, clippy, test, zizmor"]
     CI --> MERGE["Merge to main"]
     REN["Renovate PR merged"] --> MERGE
-    MERGE --> REL["release.yml on push to main<br/>build + publish snapshot image<br/>package the binary<br/>create or update draft release vX.Y.Z"]
+    MERGE --> REL["release.yml on push to main<br/>skipped if vX.Y.Z is already published<br/>build + publish snapshot image<br/>package the binary<br/>create or update draft release vX.Y.Z"]
     REL --> PUB["A human reviews and publishes the draft"]
     PUB --> TAG["tag-release.yml<br/>retag the snapshot image as X.Y.Z and latest"]
     TAG -.->|"bump the next version"| BUMP
@@ -218,10 +237,13 @@ which signs the commits it creates.
 ## Known rough edges
 
 Publishing a release is treated as the end of a version, but nothing enforces
-that. After `v0.1.1` is published, `Cargo.toml` still says `0.1.1`, so the next
-push to `main` builds another `0.1.1` snapshot and re-uploads the binary onto the
-already-published release. Bumping as soon as a release is published keeps that
-from happening; see [When in the cycle this runs](#when-in-the-cycle-this-runs).
+that. After `v0.1.1` is published, `Cargo.toml` still says `0.1.1`, so pushes to
+`main` cannot produce a release again until the version moves. The `check` job in
+`release.yml` sees the published release and skips the build, so the push is a
+no-op: a green workflow, no new image, and nothing in the log that looks like a
+failure. That is intended, since a published release is final, but it means a
+fix cannot be shipped without bumping the version. See [When in the cycle this
+runs](#when-in-the-cycle-this-runs).
 
 The snapshot tag is computed in two places. `release.yml` uses `git rev-parse
 --short HEAD`, which lets Git pick the abbreviation length, while `tag-release.yml`

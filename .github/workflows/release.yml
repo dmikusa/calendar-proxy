@@ -9,10 +9,47 @@ permissions:
 
 concurrency:
   group: release
-  cancel-in-progress: true
+  # Queue rather than cancel. Cancelling a run in flight can leave a snapshot
+  # image published with no release pointing at it, and can kill the release
+  # job midway through writing a draft. Only one run waits at a time, so a
+  # burst of pushes still collapses to the newest one.
+  cancel-in-progress: false
 
 jobs:
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      publish: ${{ steps.state.outputs.publish }}
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check whether this version is already published
+        id: state
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*= *"//; s/".*//')
+          TAG="v${VERSION}"
+          IS_DRAFT=$(gh release view "$TAG" --json isDraft --jq '.isDraft' 2>/dev/null || echo "")
+
+          if [ "$IS_DRAFT" = "false" ]; then
+            echo "$TAG is already published, nothing to build"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "$TAG is not published yet, building"
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
   build:
+    needs: check
+    # A published release is final, so a push that still names it builds
+    # nothing. package and release need this job, so they are skipped with it.
+    if: needs.check.outputs.publish == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -144,12 +181,13 @@ jobs:
           if [ "$STATE" = "true" ]; then
             echo "Updating existing draft release $TAG"
             gh release edit "$TAG" --notes-file notes.md
+            gh release upload "$TAG" artifacts/* --clobber
           elif [ -z "$STATE" ]; then
             echo "Creating draft release $TAG"
             gh release create "$TAG" --draft \
               --title "calendar-proxy $TAG" \
               --notes-file notes.md
+            gh release upload "$TAG" artifacts/* --clobber
           else
-            echo "Release $TAG already published, skipping update"
+            echo "Release $TAG is already published, leaving it alone"
           fi
-          gh release upload "$TAG" artifacts/* --clobber
