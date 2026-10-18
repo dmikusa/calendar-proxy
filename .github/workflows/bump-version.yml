@@ -71,7 +71,11 @@ jobs:
           echo "Bumped to ${VERSION}"
 
       - name: Update Cargo.lock
-        run: cargo generate-lockfile
+        # Sync only the root package's entry. `cargo generate-lockfile`
+        # re-resolves the whole dependency graph instead of honouring the
+        # existing pins, which sweeps every pending upgrade into the version
+        # bump commit and skips the release-age policy in renovate.json.
+        run: cargo update -p calendar-proxy
 
       - name: Create pull request
         env:
