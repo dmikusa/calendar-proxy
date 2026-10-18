@@ -148,5 +148,6 @@
 - `docs/plan.md` — this file
 - `docs/spec.md` — application specification
 - `docs/architecture.md` — architecture & design decisions
+- `docs/ci.md` — CI/CD workflows and the release flow
 - `README.md` — user-facing getting started guide
 - `AGENTS.md` — brief reference for LLM agents
